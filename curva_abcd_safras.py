@@ -23,6 +23,13 @@ def load_and_prepare_data(uploaded_file):
         'Status': lambda x: 'Desligado' if 'Desligado' in x.values else 'Ativo'
     }).reset_index()
     
+    # === NOVIDADE: Renomeando as categorias do MF ===
+    mf_map = {
+        'Sim': 'Profissionais de mercado financeiro (MF)',
+        'Não': 'Profissionais em migração de carreira'
+    }
+    df_agg['MF'] = df_agg['MF'].map(mf_map)
+    
     df_agg = df_agg.rename(columns={'Curva AuC': 'Curva AuC Máxima'})
     return df_agg
 
@@ -53,10 +60,8 @@ def main():
     )
     
     if visao == "Visão Por Safra":
-        # Identifica as turmas disponíveis
         turmas_disponiveis = sorted(df['Turma'].unique().tolist())
         
-        # Controle para o usuário selecionar as safras
         turmas_selecionadas = st.sidebar.multiselect(
             "Selecione as Safras (Turmas):",
             options=turmas_disponiveis,
@@ -72,9 +77,9 @@ def main():
         eixo_x_titulo = "Turma (Safra)"
         
     else:
-        # VISÃO GERAL: Pega todo o dataframe e agrupa sob o rótulo "Geral"
+        # VISÃO GERAL
         df_filtered = df.copy()
-        df_filtered['Turma'] = "Geral" # Sobrescreve a turma para consolidar tudo
+        df_filtered['Turma'] = "Geral"
         ordem_x = ["Geral"]
         eixo_x_titulo = "Visão Consolidada"
     
@@ -82,14 +87,14 @@ def main():
     # ANÁLISE 1: ÁPICE DA CURVA AuC (MF vs Não-MF)
     # =========================================================================
     st.header("1. Ápice da Curva AuC")
-    st.markdown("Percentual de atingimento das curvas A, B, C e D em seu melhor momento. Gráficos separados por atingimento de MF.")
+    st.markdown("Percentual de atingimento das curvas A, B, C e D em seu melhor momento, segmentado pelo background do consultor.")
     
     df_curva_contagem = df_filtered.groupby(['Turma', 'MF', 'Curva AuC Máxima']).size().reset_index(name='Contagem')
     df_curva_total = df_filtered.groupby(['Turma', 'MF']).size().reset_index(name='Total')
     df_curva_pct = pd.merge(df_curva_contagem, df_curva_total, on=['Turma', 'MF'])
     
     df_curva_pct['Percentual (%)'] = (df_curva_pct['Contagem'] / df_curva_pct['Total']) * 100
-    df_curva_pct['Percentual (%)'] = df_curva_pct['Percentual (%)'].round(2)
+    df_curva_pct['Percentual (%)'] = df_curva_pct['Percentual (%)'].round(1) # Arredondado para 1 casa decimal para visual mais limpo
     df_curva_pct['Turma'] = df_curva_pct['Turma'].astype(str) 
     
     fig_curva = px.bar(
@@ -103,12 +108,27 @@ def main():
         color_discrete_map={'A': '#2ca02c', 'B': '#1f77b4', 'C': '#ff7f0e', 'D': '#d62728'},
         category_orders={
             "Curva AuC Máxima": ["A", "B", "C", "D"], 
-            "Turma": ordem_x
-        }
+            "Turma": ordem_x,
+            "MF": ["Profissionais de mercado financeiro (MF)", "Profissionais em migração de carreira"]
+        },
+        template="plotly_white", # Visual limpo
+        height=550
     )
-    fig_curva.for_each_annotation(lambda a: a.update(text=a.text.replace("MF=", "Atingiu MF: ")))
-    fig_curva.update_traces(textposition='inside', textfont_size=10)
-    fig_curva.update_layout(yaxis_title="Percentual (%)", xaxis_title=eixo_x_titulo)
+    # Limpa o "MF=" dos títulos das colunas e aumenta a fonte
+    fig_curva.for_each_annotation(lambda a: a.update(text=f"<b>{a.text.split('=')[-1]}</b>", font=dict(size=14)))
+    
+    # Adiciona o "%" na label e coloca um leve contorno preto nas barras para destacar
+    fig_curva.update_traces(
+        texttemplate='%{text}%', 
+        textposition='inside', 
+        textfont_size=12,
+        marker_line_color='black',
+        marker_line_width=0.5
+    )
+    
+    # Melhora os eixos
+    fig_curva.update_yaxes(title_text="Percentual (%)", showgrid=True, gridcolor='lightgray')
+    fig_curva.update_xaxes(title_text=eixo_x_titulo)
     
     st.plotly_chart(fig_curva, use_container_width=True)
     
@@ -118,14 +138,14 @@ def main():
     # ANÁLISE 2: DESLIGAMENTOS (MF vs Não-MF)
     # =========================================================================
     st.header("2. Percentual de Desligamentos (Churn)")
-    st.markdown("Taxa de churn, comparando quem atingiu MF com quem não atingiu.")
+    st.markdown("Taxa de evasão de consultores, comparando os diferentes backgrounds profissionais.")
     
     df_desligados = df_filtered[df_filtered['Status'] == 'Desligado'].groupby(['Turma', 'MF']).size().reset_index(name='Desligados')
     df_deslig_pct = pd.merge(df_curva_total, df_desligados, on=['Turma', 'MF'], how='left')
     df_deslig_pct['Desligados'] = df_deslig_pct['Desligados'].fillna(0)
     
     df_deslig_pct['Taxa de Desligamento (%)'] = (df_deslig_pct['Desligados'] / df_deslig_pct['Total']) * 100
-    df_deslig_pct['Taxa de Desligamento (%)'] = df_deslig_pct['Taxa de Desligamento (%)'].round(2)
+    df_deslig_pct['Taxa de Desligamento (%)'] = df_deslig_pct['Taxa de Desligamento (%)'].round(1)
     df_deslig_pct['Turma'] = df_deslig_pct['Turma'].astype(str)
     
     fig_deslig = px.bar(
@@ -135,11 +155,41 @@ def main():
         color='MF',
         barmode='group',
         text='Taxa de Desligamento (%)',
-        color_discrete_map={'Sim': '#1f77b4', 'Não': '#ff7f0e'},
-        category_orders={'Turma': ordem_x}
+        color_discrete_map={
+            'Profissionais de mercado financeiro (MF)': '#1f77b4', 
+            'Profissionais em migração de carreira': '#ff7f0e'
+        },
+        category_orders={
+            'Turma': ordem_x,
+            'MF': ["Profissionais de mercado financeiro (MF)", "Profissionais em migração de carreira"]
+        },
+        template="plotly_white",
+        height=550
     )
-    fig_deslig.update_traces(textposition='outside')
-    fig_deslig.update_layout(yaxis_title="Percentual Desligado (%)", xaxis_title=eixo_x_titulo, yaxis=dict(range=[0, 110]))
+    
+    # Formatação das barras
+    fig_deslig.update_traces(
+        texttemplate='%{text}%', 
+        textposition='outside',
+        textfont_size=12,
+        marker_line_color='black',
+        marker_line_width=0.5
+    )
+    
+    # Organiza a legenda horizontalmente no topo para melhor leitura
+    fig_deslig.update_layout(
+        yaxis_title="Percentual Desligado (%)", 
+        xaxis_title=eixo_x_titulo, 
+        yaxis=dict(range=[0, 115], showgrid=True, gridcolor='lightgray'),
+        legend_title_text="", # Esconde o título "MF" da legenda
+        legend=dict(
+            orientation="h", 
+            yanchor="bottom", 
+            y=1.02, 
+            xanchor="center", 
+            x=0.5
+        )
+    )
     
     st.plotly_chart(fig_deslig, use_container_width=True)
 
