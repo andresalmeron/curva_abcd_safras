@@ -20,25 +20,30 @@ def load_and_prepare_data(uploaded_file):
         'MF': lambda x: 'Sim' if 'Sim' in x.values else 'Não',
         # min() alfabético: 'A' é menor que 'B', logo traz a curva mais alta atingida
         'Curva AuC': 'min', 
+        'Curva Receita do Consultor': 'min', # NOVO: Captura o ápice da Receita
         'Status': lambda x: 'Desligado' if 'Desligado' in x.values else 'Ativo'
     }).reset_index()
     
-    # Renomeando as categorias do MF
+    # Renomeando as categorias do MF para melhorar o UX
     mf_map = {
         'Sim': 'Profissionais de mercado financeiro (MF)',
         'Não': 'Profissionais em migração de carreira'
     }
     df_agg['MF'] = df_agg['MF'].map(mf_map)
     
-    df_agg = df_agg.rename(columns={'Curva AuC': 'Curva AuC Máxima'})
+    # Renomeando as colunas de curva para padronizar
+    df_agg = df_agg.rename(columns={
+        'Curva AuC': 'Curva AuC Máxima',
+        'Curva Receita do Consultor': 'Curva Receita Máxima'
+    })
     return df_agg
 
 def main():
     st.title("📊 Análise de Safras (Cohorts) - Consultores")
-    st.markdown("Faça o upload da base unificada para visualizar o desempenho e a retenção.")
+    st.markdown("Faça o upload da base unificada (Master) para visualizar o desempenho (AuC e Receita) e a retenção.")
     
     # Widget para upload do arquivo CSV
-    uploaded_file = st.file_uploader("Suba o arquivo Base_Unificada_Portfel_Limpa.csv", type=['csv'])
+    uploaded_file = st.file_uploader("Suba o arquivo CSV atualizado", type=['csv'])
     
     if uploaded_file is None:
         st.info("Aguardando o upload do arquivo CSV para iniciar a análise.")
@@ -107,61 +112,98 @@ def main():
         ordem_x = ["Geral"]
         eixo_x_titulo = "Visão Consolidada"
     
+    # Cor base para as curvas ABCD
+    cores_curvas = {'A': '#2ca02c', 'B': '#1f77b4', 'C': '#ff7f0e', 'D': '#d62728'}
+    
     # =========================================================================
     # ANÁLISE 1: ÁPICE DA CURVA AuC (MF vs Não-MF)
     # =========================================================================
     st.header("1. Ápice da Curva AuC")
-    st.markdown("Percentual de atingimento das curvas A, B, C e D em seu melhor momento, segmentado pelo background do consultor.")
+    st.markdown("Percentual de atingimento das curvas A, B, C e D em seu melhor momento (AuC), segmentado pelo background do consultor.")
     
-    df_curva_contagem = df_filtered.groupby(['Turma', 'MF', 'Curva AuC Máxima']).size().reset_index(name='Contagem')
-    df_curva_total = df_filtered.groupby(['Turma', 'MF']).size().reset_index(name='Total')
-    df_curva_pct = pd.merge(df_curva_contagem, df_curva_total, on=['Turma', 'MF'])
+    df_auc_contagem = df_filtered.groupby(['Turma', 'MF', 'Curva AuC Máxima']).size().reset_index(name='Contagem')
+    df_total = df_filtered.groupby(['Turma', 'MF']).size().reset_index(name='Total')
+    df_auc_pct = pd.merge(df_auc_contagem, df_total, on=['Turma', 'MF'])
     
-    df_curva_pct['Percentual (%)'] = (df_curva_pct['Contagem'] / df_curva_pct['Total']) * 100
-    df_curva_pct['Percentual (%)'] = df_curva_pct['Percentual (%)'].round(1) 
-    df_curva_pct['Turma'] = df_curva_pct['Turma'].astype(str) 
+    df_auc_pct['Percentual (%)'] = (df_auc_pct['Contagem'] / df_auc_pct['Total']) * 100
+    df_auc_pct['Percentual (%)'] = df_auc_pct['Percentual (%)'].round(1) 
+    df_auc_pct['Turma'] = df_auc_pct['Turma'].astype(str) 
     
-    fig_curva = px.bar(
-        df_curva_pct, 
+    fig_auc = px.bar(
+        df_auc_pct, 
         x='Turma', 
         y='Percentual (%)', 
         color='Curva AuC Máxima',
         facet_col='MF', 
         barmode='stack',
         text='Percentual (%)',
-        color_discrete_map={'A': '#2ca02c', 'B': '#1f77b4', 'C': '#ff7f0e', 'D': '#d62728'},
+        color_discrete_map=cores_curvas,
         category_orders={
             "Curva AuC Máxima": ["A", "B", "C", "D"], 
             "Turma": ordem_x,
             "MF": ["Profissionais de mercado financeiro (MF)", "Profissionais em migração de carreira"]
         },
         template="plotly_white",
-        height=550
+        height=500
     )
     
-    fig_curva.for_each_annotation(lambda a: a.update(text=f"<b>{a.text.split('=')[-1]}</b>", font=dict(size=14)))
-    fig_curva.update_traces(
-        texttemplate='%{text}%', 
-        textposition='inside', 
-        textfont_size=12,
-        marker_line_color='black',
-        marker_line_width=0.5
-    )
-    fig_curva.update_yaxes(title_text="Percentual (%)", showgrid=True, gridcolor='lightgray')
-    fig_curva.update_xaxes(title_text=eixo_x_titulo)
+    fig_auc.for_each_annotation(lambda a: a.update(text=f"<b>{a.text.split('=')[-1]}</b>", font=dict(size=14)))
+    fig_auc.update_traces(texttemplate='%{text}%', textposition='inside', textfont_size=12, marker_line_color='black', marker_line_width=0.5)
+    fig_auc.update_yaxes(title_text="Percentual (%)", showgrid=True, gridcolor='lightgray')
+    fig_auc.update_xaxes(title_text=eixo_x_titulo)
     
-    st.plotly_chart(fig_curva, use_container_width=True)
+    st.plotly_chart(fig_auc, use_container_width=True)
     
     st.divider()
 
     # =========================================================================
-    # ANÁLISE 2: DESLIGAMENTOS (MF vs Não-MF)
+    # ANÁLISE 2: ÁPICE DA CURVA RECEITA (MF vs Não-MF)
     # =========================================================================
-    st.header("2. Percentual de Desligamentos (Churn)")
+    st.header("2. Ápice da Curva de Receita")
+    st.markdown("Percentual de atingimento das curvas A, B, C e D em seu melhor momento (Receita), segmentado pelo background do consultor.")
+    
+    df_receita_contagem = df_filtered.groupby(['Turma', 'MF', 'Curva Receita Máxima']).size().reset_index(name='Contagem')
+    df_receita_pct = pd.merge(df_receita_contagem, df_total, on=['Turma', 'MF'])
+    
+    df_receita_pct['Percentual (%)'] = (df_receita_pct['Contagem'] / df_receita_pct['Total']) * 100
+    df_receita_pct['Percentual (%)'] = df_receita_pct['Percentual (%)'].round(1) 
+    df_receita_pct['Turma'] = df_receita_pct['Turma'].astype(str) 
+    
+    fig_rec = px.bar(
+        df_receita_pct, 
+        x='Turma', 
+        y='Percentual (%)', 
+        color='Curva Receita Máxima',
+        facet_col='MF', 
+        barmode='stack',
+        text='Percentual (%)',
+        color_discrete_map=cores_curvas,
+        category_orders={
+            "Curva Receita Máxima": ["A", "B", "C", "D"], 
+            "Turma": ordem_x,
+            "MF": ["Profissionais de mercado financeiro (MF)", "Profissionais em migração de carreira"]
+        },
+        template="plotly_white",
+        height=500
+    )
+    
+    fig_rec.for_each_annotation(lambda a: a.update(text=f"<b>{a.text.split('=')[-1]}</b>", font=dict(size=14)))
+    fig_rec.update_traces(texttemplate='%{text}%', textposition='inside', textfont_size=12, marker_line_color='black', marker_line_width=0.5)
+    fig_rec.update_yaxes(title_text="Percentual (%)", showgrid=True, gridcolor='lightgray')
+    fig_rec.update_xaxes(title_text=eixo_x_titulo)
+    
+    st.plotly_chart(fig_rec, use_container_width=True)
+    
+    st.divider()
+
+    # =========================================================================
+    # ANÁLISE 3: DESLIGAMENTOS (MF vs Não-MF)
+    # =========================================================================
+    st.header("3. Percentual de Desligamentos (Churn)")
     st.markdown("Taxa de evasão de consultores, comparando os diferentes backgrounds profissionais.")
     
     df_desligados = df_filtered[df_filtered['Status'] == 'Desligado'].groupby(['Turma', 'MF']).size().reset_index(name='Desligados')
-    df_deslig_pct = pd.merge(df_curva_total, df_desligados, on=['Turma', 'MF'], how='left')
+    df_deslig_pct = pd.merge(df_total, df_desligados, on=['Turma', 'MF'], how='left')
     df_deslig_pct['Desligados'] = df_deslig_pct['Desligados'].fillna(0)
     
     df_deslig_pct['Taxa de Desligamento (%)'] = (df_deslig_pct['Desligados'] / df_deslig_pct['Total']) * 100
